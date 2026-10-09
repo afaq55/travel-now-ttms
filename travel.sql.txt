@@ -1,0 +1,226 @@
+-- travel_agency_complete.sql
+-- Create DB and all tables used by the project (compatible with your PHP code)
+-- Engine: InnoDB, Charset: utf8mb4
+
+CREATE DATABASE IF NOT EXISTS travel_agency
+  CHARACTER SET utf8mb4
+  COLLATE utf8mb4_unicode_ci;
+USE travel_agency;
+
+-- -------------------------------------------------------
+-- USERS
+-- (used for admin/login but many booking pages allow guest booking)
+-- -------------------------------------------------------
+CREATE TABLE IF NOT EXISTS users (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(255),
+  email VARCHAR(255) UNIQUE,
+  password VARCHAR(255),
+  role ENUM('admin','agent','customer','user') DEFAULT 'user',
+  is_active TINYINT(1) DEFAULT 1,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- -------------------------------------------------------
+-- PACKAGES
+-- (tour packages: used in package listing, booking, details)
+-- -------------------------------------------------------
+CREATE TABLE IF NOT EXISTS packages (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  title VARCHAR(255) NOT NULL,
+  short_desc VARCHAR(255),
+  description TEXT,
+  price DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+  duration INT DEFAULT NULL COMMENT 'duration in days',
+  location VARCHAR(255),
+  image VARCHAR(255),
+  status ENUM('active','inactive') DEFAULT 'active',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX (title),
+  INDEX (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- -------------------------------------------------------
+-- BOOKINGS (for Packages)
+-- The PHP pages insert guest info (user_name,email,phone) so we keep both user_id (nullable)
+-- and contact snapshot columns to support logged-in and guest users.
+-- -------------------------------------------------------
+CREATE TABLE IF NOT EXISTS bookings (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  user_id INT DEFAULT NULL,
+  user_name VARCHAR(255) DEFAULT NULL,
+  email VARCHAR(255) DEFAULT NULL,
+  phone VARCHAR(50) DEFAULT NULL,
+  package_id INT DEFAULT NULL,
+  pax INT DEFAULT 1,
+  travel_date DATE DEFAULT NULL,
+  total_price DECIMAL(12,2) DEFAULT NULL,
+  status VARCHAR(50) DEFAULT 'pending', -- e.g., pending/confirmed/cancelled
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+  FOREIGN KEY (package_id) REFERENCES packages(id) ON DELETE SET NULL,
+  INDEX (user_id),
+  INDEX (package_id),
+  INDEX (travel_date),
+  INDEX (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- -------------------------------------------------------
+-- PAYMENTS
+-- Payment records for both package and bus bookings
+-- booking_type + booking_id is polymorphic (keeps code simple for legacy PHP)
+-- -------------------------------------------------------
+CREATE TABLE IF NOT EXISTS payments (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  user_id INT DEFAULT NULL,
+  booking_type ENUM('package','bus') NOT NULL,
+  booking_id INT NOT NULL,
+  payment_method ENUM('card','easypaisa','jazzcash','cash','other') NOT NULL,
+  amount DECIMAL(12,2) NOT NULL,
+  payment_status ENUM('pending','paid','failed','refunded') DEFAULT 'pending',
+  transaction_id VARCHAR(255),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+  INDEX (booking_type, booking_id),
+  INDEX (payment_status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- -------------------------------------------------------
+-- REVIEWS
+-- The project inserts using user_name in some places; we keep both user_id and user_name
+-- -------------------------------------------------------
+CREATE TABLE IF NOT EXISTS reviews (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  package_id INT DEFAULT NULL,
+  user_id INT DEFAULT NULL,
+  user_name VARCHAR(255) DEFAULT NULL,
+  rating TINYINT DEFAULT NULL CHECK (rating >= 1 AND rating <= 5),
+  comment TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (package_id) REFERENCES packages(id) ON DELETE SET NULL,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+  INDEX (package_id),
+  INDEX (rating)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- -------------------------------------------------------
+-- BUSES
+-- Admin pages expect: bus_name, bus_type, from_city, to_city, departure_time, total_seats, available_seats, price, image
+-- -------------------------------------------------------
+CREATE TABLE IF NOT EXISTS buses (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  bus_name VARCHAR(255) NOT NULL,
+  bus_type VARCHAR(100) DEFAULT 'standard',
+  from_city VARCHAR(255),
+  to_city VARCHAR(255),
+  departure_time TIME NULL,
+  arrival_time TIME NULL,
+  total_seats INT NOT NULL DEFAULT 40,
+  available_seats INT NOT NULL DEFAULT 40,
+  price DECIMAL(12,2) DEFAULT 0.00,
+  image VARCHAR(255) DEFAULT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX (from_city),
+  INDEX (to_city),
+  INDEX (departure_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- -------------------------------------------------------
+-- BUS BOOKINGS
+-- Must track cnic, phone, seat, payment_status, booking status, and prevent duplicate seat for same bus/date
+-- -------------------------------------------------------
+CREATE TABLE IF NOT EXISTS bus_bookings (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  user_id INT DEFAULT NULL,
+  bus_id INT NOT NULL,
+  seat_no VARCHAR(20) DEFAULT NULL,
+  cnic VARCHAR(50) DEFAULT NULL,
+  phone VARCHAR(50) DEFAULT NULL,
+  travel_date DATE DEFAULT NULL,
+  status VARCHAR(50) DEFAULT 'confirmed',
+  payment_status VARCHAR(50) DEFAULT 'paid',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+  FOREIGN KEY (bus_id) REFERENCES buses(id) ON DELETE CASCADE,
+  INDEX (bus_id),
+  INDEX (travel_date),
+  UNIQUE KEY ux_bus_seat_date (bus_id, travel_date, seat_no)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- -------------------------------------------------------
+-- MESSAGES (Contact us)
+-- -------------------------------------------------------
+CREATE TABLE IF NOT EXISTS messages (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(255) NOT NULL,
+  email VARCHAR(255) NOT NULL,
+  message TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX (email)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- -------------------------------------------------------
+-- SETTINGS (small key-value system table) - optional but useful
+-- -------------------------------------------------------
+CREATE TABLE IF NOT EXISTS settings (
+  `key` VARCHAR(100) PRIMARY KEY,
+  `value` TEXT,
+  updated_at TIMESTAMP NULL DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- -------------------------------------------------------
+-- TRIGGER: when a bus booking is inserted, decrement available_seats (if seat counted)
+-- Note: The PHP code may also update available seats; trigger keeps DB consistent.
+-- -------------------------------------------------------
+DELIMITER $$
+CREATE TRIGGER trg_after_insert_bus_booking
+AFTER INSERT ON bus_bookings
+FOR EACH ROW
+BEGIN
+  -- Only adjust if seat_no provided and the bus has available seats
+  IF NEW.travel_date IS NOT NULL THEN
+    UPDATE buses
+      SET available_seats = GREATEST(0, available_seats - 1)
+      WHERE id = NEW.bus_id AND available_seats > 0;
+  END IF;
+END$$
+DELIMITER ;
+
+-- -------------------------------------------------------
+-- BASIC SAMPLE DATA (admin account and sample package & bus)
+-- Note: Passwords should be hashed; the example below is a bcrypt-style hash used in your original seed.
+-- -------------------------------------------------------
+
+-- Demo INSERT statements intentionally omitted from the public repository.
+
+
+-- Demo INSERT statements intentionally omitted from the public repository.
+
+
+-- Demo INSERT statements intentionally omitted from the public repository.
+
+-- Example booking + payment (package)
+
+-- Demo INSERT statements intentionally omitted from the public repository.
+
+
+-- Demo INSERT statements intentionally omitted from the public repository.
+
+-- Example review (supports user_name)
+
+-- Demo INSERT statements intentionally omitted from the public repository.
+
+-- Example bus booking
+
+-- Demo INSERT statements intentionally omitted from the public repository.
+
+-- Keep engines and charset consistent
+ALTER TABLE users ENGINE=InnoDB, DEFAULT CHARSET=utf8mb4;
+ALTER TABLE packages ENGINE=InnoDB, DEFAULT CHARSET=utf8mb4;
+ALTER TABLE bookings ENGINE=InnoDB, DEFAULT CHARSET=utf8mb4;
+ALTER TABLE payments ENGINE=InnoDB, DEFAULT CHARSET=utf8mb4;
+ALTER TABLE reviews ENGINE=InnoDB, DEFAULT CHARSET=utf8mb4;
+ALTER TABLE buses ENGINE=InnoDB, DEFAULT CHARSET=utf8mb4;
+ALTER TABLE bus_bookings ENGINE=InnoDB, DEFAULT CHARSET=utf8mb4;
+ALTER TABLE messages ENGINE=InnoDB, DEFAULT CHARSET=utf8mb4;
+ALTER TABLE settings ENGINE=InnoDB, DEFAULT CHARSET=utf8mb4;

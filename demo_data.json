@@ -1,0 +1,13 @@
+{
+  "packages": [
+    {
+      "id": 1,
+      "title": "Sample Beach Package",
+      "duration": "3 days",
+      "price": 199.0,
+      "description": "Demo package."
+    }
+  ],
+  "users": [],
+  "bookings": []
+}

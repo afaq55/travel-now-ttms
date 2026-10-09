@@ -1,0 +1,31 @@
+# Local secrets and environment settings
+.env
+.env.*
+!.env.example
+
+# Local database dumps / user data (review before committing)
+*.dump
+*.bak
+private/
+backups/
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+
+# OS / editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# PHP / test tooling artifacts
+/vendor/
+.phpunit.cache/
+
+# Python artifacts (if any tooling is added later)
+__pycache__/
+*.py[cod]
+.venv/
+venv/
